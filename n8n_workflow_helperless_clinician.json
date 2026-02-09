@@ -1,0 +1,584 @@
+{
+    "name": "The Helperless Clinician - PI Lead Gen",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "cronExpression",
+                            "expression": "0 9 * * 1"
+                        }
+                    ]
+                }
+            },
+            "id": "trigger-cron",
+            "name": "Trigger - Weekly Monday 9:00",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                0,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "https://clinicaltrials.gov/api/v2/studies",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "query.cond",
+                            "value": "ECG OR electrocardiogram OR arrhythmia OR atrial fibrillation OR heart failure"
+                        },
+                        {
+                            "name": "query.term",
+                            "value": "AI OR artificial intelligence OR deep learning OR machine learning"
+                        },
+                        {
+                            "name": "filter.overallStatus",
+                            "value": "RECRUITING,ACTIVE_NOT_RECRUITING,ENROLLING_BY_INVITATION"
+                        },
+                        {
+                            "name": "pageSize",
+                            "value": "50"
+                        },
+                        {
+                            "name": "format",
+                            "value": "json"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "fetch-clinical-trials",
+            "name": "HTTP - ClinicalTrials.gov API",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                220,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse clinical trials and extract PI information\nconst response = $input.first().json;\nconst studies = response.studies || [];\nconst trials = [];\n\nfor (const study of studies) {\n  const protocol = study.protocolSection || {};\n  const identification = protocol.identificationModule || {};\n  const contacts = protocol.contactsLocationsModule || {};\n  const conditions = protocol.conditionsModule || {};\n  const sponsor = protocol.sponsorCollaboratorsModule || {};\n  \n  const nctId = identification.nctId || '';\n  const title = identification.briefTitle || '';\n  const conditionList = (conditions.conditions || []).join(', ');\n  \n  // Get PI from centralContacts or overallOfficials\n  const officials = contacts.overallOfficials || [];\n  const centralContacts = contacts.centralContacts || [];\n  \n  // Find Principal Investigator\n  for (const official of officials) {\n    if (official.role === 'PRINCIPAL_INVESTIGATOR' || official.role === 'STUDY_CHAIR') {\n      const name = official.name || '';\n      const affiliation = official.affiliation || '';\n      \n      // Check for MD/PhD\n      const hasMdPhd = /M\\.?D|Ph\\.?D|MBBS|DO/i.test(name);\n      \n      if (name && hasMdPhd) {\n        trials.push({\n          nct_id: nctId,\n          trial_title: title,\n          conditions: conditionList,\n          pi_name: name.replace(/,.*$/, '').trim(), // Remove credentials for search\n          pi_full_name: name,\n          pi_role: official.role,\n          institution: affiliation,\n          sponsor: (sponsor.leadSponsor || {}).name || '',\n          has_md_phd: hasMdPhd\n        });\n      }\n    }\n  }\n}\n\n// Remove duplicates by PI name\nconst unique = [...new Map(trials.map(t => [t.pi_name + t.nct_id, t])).values()];\n\nreturn unique.map(t => ({ json: t }));"
+            },
+            "id": "parse-trials",
+            "name": "Code - Parse Trials & Extract PI",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                440,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": false,
+                        "leftValue": "",
+                        "typeValidation": "loose"
+                    },
+                    "conditions": [
+                        {
+                            "id": "condition-md-phd",
+                            "leftValue": "={{ $json.has_md_phd }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "filter-pi",
+            "name": "IF - Filter PI with MD/PhD",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                660,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "https://serpapi.com/search.json",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "api_key",
+                            "value": "={{$credentials.serpApiKey}}"
+                        },
+                        {
+                            "name": "engine",
+                            "value": "google"
+                        },
+                        {
+                            "name": "q",
+                            "value": "=\"{{ $json.pi_name }}\" \"{{ $json.institution }}\" site:linkedin.com"
+                        },
+                        {
+                            "name": "num",
+                            "value": "5"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "search-linkedin-pi",
+            "name": "SerpAPI - Search PI on LinkedIn",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                880,
+                -100
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse LinkedIn profile for PI\nconst results = $input.first().json.organic_results || [];\nconst trial = $('IF - Filter PI with MD/PhD').first().json;\n\nlet linkedinUrl = '';\nlet headline = '';\n\nfor (const result of results) {\n  const url = result.link || '';\n  if (url.includes('linkedin.com/in/')) {\n    linkedinUrl = url;\n    const title = result.title || '';\n    headline = title.split(' - ').slice(1).join(' - ').replace(' | LinkedIn', '').trim();\n    break;\n  }\n}\n\nreturn [{\n  json: {\n    ...trial,\n    linkedin_url: linkedinUrl,\n    linkedin_headline: headline,\n    linkedin_found: linkedinUrl !== ''\n  }\n}];"
+            },
+            "id": "parse-linkedin-pi",
+            "name": "Code - Parse LinkedIn Profile",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1100,
+                -100
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": false,
+                        "leftValue": "",
+                        "typeValidation": "loose"
+                    },
+                    "conditions": [
+                        {
+                            "id": "condition-linkedin-found",
+                            "leftValue": "={{ $json.linkedin_found }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "filter-linkedin-found",
+            "name": "IF - LinkedIn Found",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                1320,
+                -100
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "db",
+                            "value": "pubmed"
+                        },
+                        {
+                            "name": "term",
+                            "value": "={{ $json.pi_name }}[Author] AND (ECG OR electrocardiogram OR AI OR deep learning OR machine learning)"
+                        },
+                        {
+                            "name": "retmax",
+                            "value": "100"
+                        },
+                        {
+                            "name": "retmode",
+                            "value": "json"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "fetch-pubmed",
+            "name": "HTTP - PubMed Search",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1540,
+                -200
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Analyze PubMed results to determine if clinician vs data scientist\nconst pubmedResponse = $input.first().json;\nconst piData = $('IF - LinkedIn Found').first().json;\n\nconst idList = (pubmedResponse.esearchresult || {}).idlist || [];\nconst totalPapers = idList.length;\n\n// Simple heuristic: if they have papers but headline doesn't mention ML/AI/Data Science\n// they're likely a clinician who publishes clinical AI work but isn't technical\nconst headline = (piData.linkedin_headline || '').toLowerCase();\nconst technicalKeywords = ['data scientist', 'machine learning', 'deep learning', 'ai engineer', 'ml engineer', 'software', 'developer', 'computer science', 'bioinformatics'];\n\nconst isTechnical = technicalKeywords.some(kw => headline.includes(kw));\nconst isClinicianNotDs = !isTechnical && totalPapers > 0;\n\nreturn [{\n  json: {\n    ...piData,\n    pubmed_paper_count: totalPapers,\n    is_clinician_not_ds: isClinicianNotDs,\n    status: 'new'\n  }\n}];"
+            },
+            "id": "analyze-publications",
+            "name": "Code - Analyze Publications",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1760,
+                -200
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": false,
+                        "leftValue": "",
+                        "typeValidation": "loose"
+                    },
+                    "conditions": [
+                        {
+                            "id": "condition-clinician",
+                            "leftValue": "={{ $json.is_clinician_not_ds }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "filter-clinician",
+            "name": "IF - Is Clinician (Not DS)",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                1980,
+                -200
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "documentId": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "YOUR_GOOGLE_SHEET_ID"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "PI_Leads"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "PI Name": "={{ $json.pi_full_name }}",
+                        "Role": "={{ $json.pi_role }}",
+                        "Institution": "={{ $json.institution }}",
+                        "NCT ID": "={{ $json.nct_id }}",
+                        "Trial Title": "={{ $json.trial_title }}",
+                        "Conditions": "={{ $json.conditions }}",
+                        "Sponsor": "={{ $json.sponsor }}",
+                        "LinkedIn URL": "={{ $json.linkedin_url }}",
+                        "LinkedIn Headline": "={{ $json.linkedin_headline }}",
+                        "PubMed Papers": "={{ $json.pubmed_paper_count }}",
+                        "Is Clinician (Not DS)": "={{ $json.is_clinician_not_ds }}",
+                        "Status": "={{ $json.status }}",
+                        "Date Added": "={{ $now.format('YYYY-MM-DD HH:mm') }}"
+                    }
+                },
+                "options": {}
+            },
+            "id": "save-to-sheets",
+            "name": "Google Sheets - Save PI Lead",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.4,
+            "position": [
+                2200,
+                -300
+            ]
+        },
+        {
+            "parameters": {
+                "resource": "chat",
+                "operation": "message",
+                "model": "gpt-4o",
+                "messages": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "You are an expert at writing personalized outreach messages for academic clinicians. Write concise, respectful LinkedIn messages (max 300 characters). Focus on solving their technical burden, not selling."
+                        },
+                        {
+                            "role": "user",
+                            "content": "=Write a personalized LinkedIn message for a Principal Investigator:\n\nName: {{ $json.pi_full_name }}\nInstitution: {{ $json.institution }}\nTrial: {{ $json.trial_title }} ({{ $json.nct_id }})\nConditions: {{ $json.conditions }}\nLinkedIn Headline: {{ $json.linkedin_headline }}\nPubMed Papers: {{ $json.pubmed_paper_count }}\n\nContext: This PI is running an AI/ECG clinical trial or publishing AI-related cardiac research, but they are a clinician (MD/PhD), not a technical data scientist. They likely struggle with:\n- Bias analysis for diverse patient populations\n- Statistical figures, tables, p-values for journal submissions\n- Technical sections of trial reports\n\nMy offer: I can be their \"technical department\" - handling bias audits, generating publication-ready figures, demographic subgroup analysis.\n\nWrite 2-3 sentences:\n1. Reference their specific trial/research area\n2. Offer to handle the technical bias analysis burden\n3. Mention specific deliverable: bias section + figures for 1 trial/paper\n\nKeep under 300 characters. Professional, academic tone. No emojis."
+                        }
+                    ]
+                },
+                "options": {
+                    "temperature": 0.7,
+                    "maxTokens": 150
+                }
+            },
+            "id": "generate-message",
+            "name": "OpenAI - Generate PI Outreach",
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 1.4,
+            "position": [
+                2420,
+                -300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "YOUR_GOOGLE_SHEET_ID"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "PI_Leads"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "Outreach Message": "={{ $json.message.content }}",
+                        "Message Generated At": "={{ $now.format('YYYY-MM-DD HH:mm') }}"
+                    }
+                },
+                "options": {
+                    "cellFormat": "USER_ENTERED"
+                }
+            },
+            "id": "update-sheets-message",
+            "name": "Google Sheets - Save Message",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.4,
+            "position": [
+                2640,
+                -300
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "no-op-pi-filtered",
+            "name": "No Operation (PI Filtered)",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                880,
+                100
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "no-op-linkedin-not-found",
+            "name": "No Operation (No LinkedIn)",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                1540,
+                0
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "no-op-is-ds",
+            "name": "No Operation (Is Data Scientist)",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                2200,
+                -100
+            ]
+        }
+    ],
+    "connections": {
+        "Trigger - Weekly Monday 9:00": {
+            "main": [
+                [
+                    {
+                        "node": "HTTP - ClinicalTrials.gov API",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "HTTP - ClinicalTrials.gov API": {
+            "main": [
+                [
+                    {
+                        "node": "Code - Parse Trials & Extract PI",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code - Parse Trials & Extract PI": {
+            "main": [
+                [
+                    {
+                        "node": "IF - Filter PI with MD/PhD",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "IF - Filter PI with MD/PhD": {
+            "main": [
+                [
+                    {
+                        "node": "SerpAPI - Search PI on LinkedIn",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation (PI Filtered)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "SerpAPI - Search PI on LinkedIn": {
+            "main": [
+                [
+                    {
+                        "node": "Code - Parse LinkedIn Profile",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code - Parse LinkedIn Profile": {
+            "main": [
+                [
+                    {
+                        "node": "IF - LinkedIn Found",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "IF - LinkedIn Found": {
+            "main": [
+                [
+                    {
+                        "node": "HTTP - PubMed Search",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation (No LinkedIn)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "HTTP - PubMed Search": {
+            "main": [
+                [
+                    {
+                        "node": "Code - Analyze Publications",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code - Analyze Publications": {
+            "main": [
+                [
+                    {
+                        "node": "IF - Is Clinician (Not DS)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "IF - Is Clinician (Not DS)": {
+            "main": [
+                [
+                    {
+                        "node": "Google Sheets - Save PI Lead",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation (Is Data Scientist)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Google Sheets - Save PI Lead": {
+            "main": [
+                [
+                    {
+                        "node": "OpenAI - Generate PI Outreach",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "OpenAI - Generate PI Outreach": {
+            "main": [
+                [
+                    {
+                        "node": "Google Sheets - Save Message",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "staticData": null,
+    "tags": [
+        {
+            "name": "lead-generation"
+        },
+        {
+            "name": "clinical-trials"
+        },
+        {
+            "name": "principal-investigator"
+        }
+    ],
+    "triggerCount": 1,
+    "updatedAt": "2026-02-09T13:15:00.000Z",
+    "versionId": "1"
+}

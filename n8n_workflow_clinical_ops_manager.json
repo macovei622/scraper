@@ -1,0 +1,522 @@
+{
+    "name": "The Clinical Ops Manager - Diversity Quota Lead Gen",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "cronExpression",
+                            "expression": "0 10 * * 1"
+                        }
+                    ]
+                }
+            },
+            "id": "trigger-cron",
+            "name": "Trigger - Weekly Monday 10:00",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                0,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "https://serpapi.com/search.json",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "api_key",
+                            "value": "={{$credentials.serpApiKey}}"
+                        },
+                        {
+                            "name": "engine",
+                            "value": "google"
+                        },
+                        {
+                            "name": "q",
+                            "value": "\"diversity in clinical trials\" (\"biotech\" OR \"pharma\" OR \"pharmaceutical\") OR \"FDA diversity plan\" \"clinical trials\" OR \"FDORA\" \"clinical trial diversity\""
+                        },
+                        {
+                            "name": "tbm",
+                            "value": "nws"
+                        },
+                        {
+                            "name": "num",
+                            "value": "20"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "search-diversity-news",
+            "name": "SerpAPI - Search Diversity News",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                220,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Extract company names from diversity-related news articles\nconst results = $input.first().json.news_results || $input.first().json.organic_results || [];\nconst companies = [];\n\n// Common pharma/biotech patterns to extract from titles and snippets\nconst companyPatterns = [\n  /([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*(?:\\s+(?:Therapeutics|Pharmaceuticals|Pharma|Biotech|Biosciences|Life Sciences|Oncology|Medical|Health))?)/g\n];\n\nfor (const result of results) {\n  const title = result.title || '';\n  const snippet = result.snippet || '';\n  const source = result.source || '';\n  const link = result.link || '';\n  const combinedText = title + ' ' + snippet;\n  \n  // Skip news outlets themselves\n  if (source.includes('Reuters') || source.includes('Bloomberg') || source.includes('STAT')) {\n    // Extract mentioned companies from the text\n    const words = combinedText.split(/\\s+/);\n    for (let i = 0; i < words.length - 1; i++) {\n      const potentialCompany = words[i] + ' ' + words[i + 1];\n      if (/(?:Therapeutics|Pharmaceuticals|Pharma|Biotech|Medical|Health)/i.test(potentialCompany)) {\n        companies.push({\n          company_name: potentialCompany.replace(/[^a-zA-Z\\s]/g, '').trim(),\n          source_article: title,\n          article_url: link,\n          has_diversity_pressure: true\n        });\n      }\n    }\n  }\n}\n\n// Also add some known pharma companies if mentioned in text\nconst knownCompanies = ['Pfizer', 'Moderna', 'Johnson & Johnson', 'Merck', 'Novartis', 'Roche', 'AstraZeneca', 'Bristol-Myers Squibb', 'Eli Lilly', 'Amgen', 'Gilead', 'Abbvie', 'Regeneron', 'Biogen'];\n\nfor (const result of results) {\n  const text = (result.title || '') + ' ' + (result.snippet || '');\n  for (const company of knownCompanies) {\n    if (text.includes(company)) {\n      companies.push({\n        company_name: company,\n        source_article: result.title || '',\n        article_url: result.link || '',\n        has_diversity_pressure: true\n      });\n    }\n  }\n}\n\n// Remove duplicates\nconst unique = [...new Map(companies.map(c => [c.company_name, c])).values()];\n\nreturn unique.map(c => ({ json: c }));"
+            },
+            "id": "parse-companies",
+            "name": "Code - Extract Companies from News",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                440,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": false,
+                        "leftValue": "",
+                        "typeValidation": "loose"
+                    },
+                    "conditions": [
+                        {
+                            "id": "condition-company-name",
+                            "leftValue": "={{ $json.company_name }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "string",
+                                "operation": "isNotEmpty"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "filter-valid-companies",
+            "name": "IF - Valid Company Name",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                660,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "https://serpapi.com/search.json",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "api_key",
+                            "value": "={{$credentials.serpApiKey}}"
+                        },
+                        {
+                            "name": "engine",
+                            "value": "google"
+                        },
+                        {
+                            "name": "q",
+                            "value": "=site:linkedin.com (\"Clinical Operations Manager\" OR \"Director Clinical Operations\" OR \"Clinical Trial Manager\" OR \"Patient Recruitment Manager\" OR \"Clinical Development\" OR \"VP Clinical Operations\") \"{{ $json.company_name }}\""
+                        },
+                        {
+                            "name": "num",
+                            "value": "10"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "search-linkedin-ops",
+            "name": "SerpAPI - Search Clinical Ops on LinkedIn",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                880,
+                -100
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse Clinical Ops profiles from LinkedIn search\nconst results = $input.first().json.organic_results || [];\nconst company = $('IF - Valid Company Name').first().json;\nconst profiles = [];\n\nfor (const result of results) {\n  const url = result.link || '';\n  const title = result.title || '';\n  const snippet = result.snippet || '';\n  \n  // Only LinkedIn profile URLs\n  if (!url.includes('linkedin.com/in/')) {\n    continue;\n  }\n  \n  // Extract name from title\n  const nameParts = title.split(' - ');\n  const name = nameParts[0] || '';\n  const headline = nameParts.slice(1).join(' - ').replace(' | LinkedIn', '').trim();\n  \n  profiles.push({\n    name: name,\n    headline: headline,\n    linkedin_url: url,\n    snippet: snippet,\n    company_name: company.company_name,\n    source_article: company.source_article,\n    article_url: company.article_url,\n    has_diversity_pressure: company.has_diversity_pressure\n  });\n}\n\nreturn profiles.map(p => ({ json: p }));"
+            },
+            "id": "parse-linkedin-ops",
+            "name": "Code - Parse Clinical Ops Profiles",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1100,
+                -100
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": false,
+                        "leftValue": "",
+                        "typeValidation": "loose"
+                    },
+                    "conditions": [
+                        {
+                            "id": "condition-title",
+                            "leftValue": "={{ $json.headline }}",
+                            "rightValue": "Clinical Operations|Clinical Trial Manager|Patient Recruitment|Clinical Programs|Clinical Development|VP Clinical|Director Clinical|Head of Clinical|Clinical Affairs",
+                            "operator": {
+                                "type": "string",
+                                "operation": "regex"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "filter-ops-profiles",
+            "name": "IF - Filter Clinical Ops Titles",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                1320,
+                -100
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "https://clinicaltrials.gov/api/v2/studies",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "query.spons",
+                            "value": "={{ $json.company_name }}"
+                        },
+                        {
+                            "name": "filter.overallStatus",
+                            "value": "RECRUITING,ACTIVE_NOT_RECRUITING"
+                        },
+                        {
+                            "name": "pageSize",
+                            "value": "10"
+                        },
+                        {
+                            "name": "format",
+                            "value": "json"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "check-company-trials",
+            "name": "HTTP - Check Company Trials",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1540,
+                -200
+            ],
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "jsCode": "// Enrich with trial context\nconst trialsResponse = $input.first().json;\nconst profile = $('IF - Filter Clinical Ops Titles').first().json;\n\nconst studies = trialsResponse.studies || [];\nconst activeTrials = studies.length;\n\n// Check for diversity-related conditions or indications\nlet diversityRelevantTrials = 0;\nconst diversityIndications = ['cardiovascular', 'diabetes', 'hypertension', 'obesity', 'cancer', 'oncology', 'alzheimer', 'sickle cell'];\n\nfor (const study of studies) {\n  const conditions = ((study.protocolSection || {}).conditionsModule || {}).conditions || [];\n  const conditionText = conditions.join(' ').toLowerCase();\n  \n  if (diversityIndications.some(d => conditionText.includes(d))) {\n    diversityRelevantTrials++;\n  }\n}\n\nreturn [{\n  json: {\n    ...profile,\n    active_trials: activeTrials,\n    diversity_relevant_trials: diversityRelevantTrials,\n    status: 'new'\n  }\n}];"
+            },
+            "id": "enrich-trial-context",
+            "name": "Code - Enrich Trial Context",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1760,
+                -200
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "documentId": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "YOUR_GOOGLE_SHEET_ID"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "Clinical_Ops_Leads"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "Name": "={{ $json.name }}",
+                        "Title": "={{ $json.headline }}",
+                        "Company": "={{ $json.company_name }}",
+                        "LinkedIn URL": "={{ $json.linkedin_url }}",
+                        "Has Diversity Pressure": "={{ $json.has_diversity_pressure }}",
+                        "Source Article": "={{ $json.source_article }}",
+                        "Article URL": "={{ $json.article_url }}",
+                        "Active Trials": "={{ $json.active_trials }}",
+                        "Diversity Relevant Trials": "={{ $json.diversity_relevant_trials }}",
+                        "Status": "={{ $json.status }}",
+                        "Date Added": "={{ $now.format('YYYY-MM-DD HH:mm') }}"
+                    }
+                },
+                "options": {}
+            },
+            "id": "save-to-sheets",
+            "name": "Google Sheets - Save Clinical Ops Lead",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.4,
+            "position": [
+                1980,
+                -200
+            ]
+        },
+        {
+            "parameters": {
+                "resource": "chat",
+                "operation": "message",
+                "model": "gpt-4o",
+                "messages": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "You are an expert B2B outreach copywriter for clinical trial services. Write concise LinkedIn messages (max 300 characters) that address enrollment/diversity challenges directly. Be specific about the problem and solution."
+                        },
+                        {
+                            "role": "user",
+                            "content": "=Write a personalized LinkedIn message for a Clinical Operations Manager:\n\nName: {{ $json.name }}\nTitle: {{ $json.headline }}\nCompany: {{ $json.company_name }}\nActive Trials: {{ $json.active_trials }}\nDiversity-Relevant Trials: {{ $json.diversity_relevant_trials }}\nDiversity Pressure Context: {{ $json.source_article }}\n\nBackground context:\n- FDA's diversity plan (FDORA 2022) requires demographic quotas in clinical trials\n- Many trials struggle to recruit sufficient underrepresented populations (African American, Latino, etc.)\n- Each month of delay costs $50k+ in trial operations\n- Common issue: 2-5% representation vs 20% required\n\nMy offer: Synthetic data augmentation for clinical trial diversity requirements\n- We synthesize statistically valid supplementary data for power/sensitivity analysis\n- NOT replacing real patients, but supporting statistical requirements\n- Helps close enrollment gaps without extending timelines\n\nWrite 2-3 sentences:\n1. Acknowledge their diversity/enrollment challenge with a specific pain point\n2. Offer synthetic data solution for statistical diversity requirements\n3. Mention specific benefit: avoid timeline extension\n\nKeep under 300 characters. Direct, problem-focused tone. No emojis."
+                        }
+                    ]
+                },
+                "options": {
+                    "temperature": 0.7,
+                    "maxTokens": 150
+                }
+            },
+            "id": "generate-message",
+            "name": "OpenAI - Generate Ops Outreach",
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 1.4,
+            "position": [
+                2200,
+                -200
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "YOUR_GOOGLE_SHEET_ID"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "Clinical_Ops_Leads"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "Outreach Message": "={{ $json.message.content }}",
+                        "Message Generated At": "={{ $now.format('YYYY-MM-DD HH:mm') }}"
+                    }
+                },
+                "options": {
+                    "cellFormat": "USER_ENTERED"
+                }
+            },
+            "id": "update-sheets-message",
+            "name": "Google Sheets - Save Message",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.4,
+            "position": [
+                2420,
+                -200
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "no-op-company-filtered",
+            "name": "No Operation (Company Filtered)",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                880,
+                100
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "no-op-ops-filtered",
+            "name": "No Operation (Ops Filtered)",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                1540,
+                0
+            ]
+        }
+    ],
+    "connections": {
+        "Trigger - Weekly Monday 10:00": {
+            "main": [
+                [
+                    {
+                        "node": "SerpAPI - Search Diversity News",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "SerpAPI - Search Diversity News": {
+            "main": [
+                [
+                    {
+                        "node": "Code - Extract Companies from News",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code - Extract Companies from News": {
+            "main": [
+                [
+                    {
+                        "node": "IF - Valid Company Name",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "IF - Valid Company Name": {
+            "main": [
+                [
+                    {
+                        "node": "SerpAPI - Search Clinical Ops on LinkedIn",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation (Company Filtered)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "SerpAPI - Search Clinical Ops on LinkedIn": {
+            "main": [
+                [
+                    {
+                        "node": "Code - Parse Clinical Ops Profiles",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code - Parse Clinical Ops Profiles": {
+            "main": [
+                [
+                    {
+                        "node": "IF - Filter Clinical Ops Titles",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "IF - Filter Clinical Ops Titles": {
+            "main": [
+                [
+                    {
+                        "node": "HTTP - Check Company Trials",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation (Ops Filtered)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "HTTP - Check Company Trials": {
+            "main": [
+                [
+                    {
+                        "node": "Code - Enrich Trial Context",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code - Enrich Trial Context": {
+            "main": [
+                [
+                    {
+                        "node": "Google Sheets - Save Clinical Ops Lead",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Google Sheets - Save Clinical Ops Lead": {
+            "main": [
+                [
+                    {
+                        "node": "OpenAI - Generate Ops Outreach",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "OpenAI - Generate Ops Outreach": {
+            "main": [
+                [
+                    {
+                        "node": "Google Sheets - Save Message",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "staticData": null,
+    "tags": [
+        {
+            "name": "lead-generation"
+        },
+        {
+            "name": "clinical-trials"
+        },
+        {
+            "name": "diversity"
+        }
+    ],
+    "triggerCount": 1,
+    "updatedAt": "2026-02-09T13:15:00.000Z",
+    "versionId": "1"
+}

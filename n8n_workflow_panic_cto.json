@@ -1,0 +1,508 @@
+{
+    "name": "The Panic CTO - AI Medical Device Lead Gen",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "cronExpression",
+                            "expression": "0 10 * * 1-5"
+                        }
+                    ]
+                }
+            },
+            "id": "trigger-cron",
+            "name": "Trigger - Weekdays 10:00",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                0,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "https://serpapi.com/search.json",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "api_key",
+                            "value": "={{$credentials.serpApiKey}}"
+                        },
+                        {
+                            "name": "engine",
+                            "value": "google"
+                        },
+                        {
+                            "name": "q",
+                            "value": "\"AI ECG\" \"medical device\" \"FDA 510(k)\" OR \"AI-powered diagnostic device\" \"cardiology\""
+                        },
+                        {
+                            "name": "num",
+                            "value": "20"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "search-companies",
+            "name": "SerpAPI - Search AI ECG Companies",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                220,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse company domains from Google search results\nconst results = $input.first().json.organic_results || [];\nconst companies = [];\n\nfor (const result of results) {\n  const url = result.link || '';\n  const domain = url.replace(/^https?:\\/\\//, '').split('/')[0];\n  const title = result.title || '';\n  const snippet = result.snippet || '';\n  \n  // Skip LinkedIn, news sites, etc.\n  if (domain.includes('linkedin.com') || \n      domain.includes('news') || \n      domain.includes('wikipedia') ||\n      domain.includes('crunchbase')) {\n    continue;\n  }\n  \n  companies.push({\n    domain: domain,\n    website: 'https://' + domain,\n    title: title,\n    description: snippet,\n    source: 'google_search'\n  });\n}\n\n// Remove duplicates by domain\nconst unique = [...new Map(companies.map(c => [c.domain, c])).values()];\n\nreturn unique.map(c => ({ json: c }));"
+            },
+            "id": "parse-companies",
+            "name": "Code - Parse Company Domains",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                440,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": false,
+                        "leftValue": "",
+                        "typeValidation": "loose"
+                    },
+                    "conditions": [
+                        {
+                            "id": "condition-ecg",
+                            "leftValue": "={{ $json.description }}",
+                            "rightValue": "ECG|cardio|arrhythmia|wearable|SaMD|AI|ML|remote monitoring|cardiac|heart",
+                            "operator": {
+                                "type": "string",
+                                "operation": "regex"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "filter-companies",
+            "name": "IF - Filter Relevant Companies",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                660,
+                0
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "https://serpapi.com/search.json",
+                "sendQuery": true,
+                "queryParameters": {
+                    "parameters": [
+                        {
+                            "name": "api_key",
+                            "value": "={{$credentials.serpApiKey}}"
+                        },
+                        {
+                            "name": "engine",
+                            "value": "google"
+                        },
+                        {
+                            "name": "q",
+                            "value": "=site:linkedin.com (\"CTO\" OR \"Chief Technology Officer\" OR \"VP Engineering\" OR \"VP R&D\" OR \"Head of AI\" OR \"Chief AI Officer\") \"{{ $json.domain }}\""
+                        },
+                        {
+                            "name": "num",
+                            "value": "10"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "search-linkedin-cto",
+            "name": "SerpAPI - Search LinkedIn CTOs",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                880,
+                -100
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse LinkedIn profiles from Google search results\nconst results = $input.first().json.organic_results || [];\nconst company = $('IF - Filter Relevant Companies').first().json;\nconst profiles = [];\n\nfor (const result of results) {\n  const url = result.link || '';\n  const title = result.title || '';\n  const snippet = result.snippet || '';\n  \n  // Only LinkedIn profile URLs\n  if (!url.includes('linkedin.com/in/')) {\n    continue;\n  }\n  \n  // Extract name from title (usually \"Name - Title - LinkedIn\")\n  const nameParts = title.split(' - ');\n  const name = nameParts[0] || '';\n  const headline = nameParts.slice(1).join(' - ').replace(' | LinkedIn', '').trim();\n  \n  profiles.push({\n    name: name,\n    headline: headline,\n    linkedin_url: url,\n    snippet: snippet,\n    company_domain: company.domain,\n    company_website: company.website,\n    company_description: company.description\n  });\n}\n\nreturn profiles.map(p => ({ json: p }));"
+            },
+            "id": "parse-linkedin-profiles",
+            "name": "Code - Parse LinkedIn Profiles",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1100,
+                -100
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": false,
+                        "leftValue": "",
+                        "typeValidation": "loose"
+                    },
+                    "conditions": [
+                        {
+                            "id": "condition-title",
+                            "leftValue": "={{ $json.headline }}",
+                            "rightValue": "CTO|Chief Technology Officer|VP Engineering|VP R&D|Head of AI|Chief AI Officer|VP Technology|Director of Engineering",
+                            "operator": {
+                                "type": "string",
+                                "operation": "regex"
+                            }
+                        },
+                        {
+                            "id": "condition-medical",
+                            "leftValue": "={{ $json.snippet }}",
+                            "rightValue": "medical device|SaMD|ECG|cardiology|cardiac|wearable|remote monitoring|digital health|FDA|510\\(k\\)|De Novo|healthcare|health tech",
+                            "operator": {
+                                "type": "string",
+                                "operation": "regex"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "filter-cto-profiles",
+            "name": "IF - Filter CTO Profiles",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                1320,
+                -100
+            ]
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "={{ $json.company_website }}",
+                "options": {
+                    "timeout": 10000
+                }
+            },
+            "id": "fetch-company-site",
+            "name": "HTTP - Fetch Company Website",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1540,
+                -200
+            ],
+            "continueOnFail": true
+        },
+        {
+            "parameters": {
+                "jsCode": "// Search for FDA claims in company website HTML\nconst html = ($input.first().json.data || $input.first().json.body || '').toLowerCase();\nconst profile = $('IF - Filter CTO Profiles').first().json;\n\n// FDA-related keywords\nconst fdaKeywords = ['fda', '510(k)', '510k', 'de novo', 'pma', 'samd', 'regulated', 'cleared', 'approved', 'class ii', 'class iii', 'medical device'];\n\nlet fdaClaimsFound = [];\nfor (const keyword of fdaKeywords) {\n  if (html.includes(keyword)) {\n    fdaClaimsFound.push(keyword);\n  }\n}\n\nconst hasFdaClaims = fdaClaimsFound.length > 0;\n\nreturn [{\n  json: {\n    ...profile,\n    has_fda_claims: hasFdaClaims,\n    fda_keywords_found: fdaClaimsFound.join(', '),\n    status: 'new'\n  }\n}];"
+            },
+            "id": "check-fda-claims",
+            "name": "Code - Check FDA Claims",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1760,
+                -200
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "documentId": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "YOUR_GOOGLE_SHEET_ID"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "Leads"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "Name": "={{ $json.name }}",
+                        "Title": "={{ $json.headline }}",
+                        "LinkedIn URL": "={{ $json.linkedin_url }}",
+                        "Company Domain": "={{ $json.company_domain }}",
+                        "Company Website": "={{ $json.company_website }}",
+                        "Company Description": "={{ $json.company_description }}",
+                        "Has FDA Claims": "={{ $json.has_fda_claims }}",
+                        "FDA Keywords": "={{ $json.fda_keywords_found }}",
+                        "Tags": "CTO/VP Eng, AI-ECG, FDA-SaMD",
+                        "Status": "={{ $json.status }}",
+                        "Date Added": "={{ $now.format('YYYY-MM-DD HH:mm') }}"
+                    }
+                },
+                "options": {}
+            },
+            "id": "save-to-sheets",
+            "name": "Google Sheets - Save Lead",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.4,
+            "position": [
+                1980,
+                -200
+            ]
+        },
+        {
+            "parameters": {
+                "resource": "chat",
+                "operation": "message",
+                "model": "gpt-4o",
+                "messages": {
+                    "values": [
+                        {
+                            "role": "system",
+                            "content": "You are an expert B2B outreach copywriter specializing in medical device regulatory compliance. Write extremely concise, personalized LinkedIn connection messages (max 300 characters). Focus on value, not features. Be direct, not salesy."
+                        },
+                        {
+                            "role": "user",
+                            "content": "=Write a personalized LinkedIn connection request for:\n\nName: {{ $json.name }}\nTitle: {{ $json.headline }}\nCompany: {{ $json.company_domain }}\nCompany focus: {{ $json.company_description }}\nHas FDA claims on website: {{ $json.has_fda_claims }}\n\nMy offer: Algorithmic fairness audit for AI medical devices. We help prevent FDA Refuse-to-File by conducting fairness audits + synthetic data remediation for $5k-$18k. Focus on FDORA 2022 compliance.\n\nWrite 2-3 sentences:\n1. Acknowledge their AI ECG/diagnostic device work with FDA focus\n2. Briefly mention our fairness audit + synthetic remediation value\n3. Soft CTA for a brief chat\n\nKeep it under 300 characters. No emojis. Professional tone."
+                        }
+                    ]
+                },
+                "options": {
+                    "temperature": 0.7,
+                    "maxTokens": 150
+                }
+            },
+            "id": "generate-message",
+            "name": "OpenAI - Generate Outreach Message",
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 1.4,
+            "position": [
+                2200,
+                -200
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "YOUR_GOOGLE_SHEET_ID"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "mode": "list",
+                    "value": "Leads"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "Outreach Message": "={{ $json.message.content }}",
+                        "Message Generated At": "={{ $now.format('YYYY-MM-DD HH:mm') }}"
+                    }
+                },
+                "options": {
+                    "cellFormat": "USER_ENTERED"
+                }
+            },
+            "id": "update-sheets-message",
+            "name": "Google Sheets - Save Message",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.4,
+            "position": [
+                2420,
+                -200
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "no-op-filtered",
+            "name": "No Operation (Filtered Out)",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                880,
+                100
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "no-op-cto-filtered",
+            "name": "No Operation (CTO Filtered)",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                1540,
+                0
+            ]
+        }
+    ],
+    "connections": {
+        "Trigger - Weekdays 10:00": {
+            "main": [
+                [
+                    {
+                        "node": "SerpAPI - Search AI ECG Companies",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "SerpAPI - Search AI ECG Companies": {
+            "main": [
+                [
+                    {
+                        "node": "Code - Parse Company Domains",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code - Parse Company Domains": {
+            "main": [
+                [
+                    {
+                        "node": "IF - Filter Relevant Companies",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "IF - Filter Relevant Companies": {
+            "main": [
+                [
+                    {
+                        "node": "SerpAPI - Search LinkedIn CTOs",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation (Filtered Out)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "SerpAPI - Search LinkedIn CTOs": {
+            "main": [
+                [
+                    {
+                        "node": "Code - Parse LinkedIn Profiles",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code - Parse LinkedIn Profiles": {
+            "main": [
+                [
+                    {
+                        "node": "IF - Filter CTO Profiles",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "IF - Filter CTO Profiles": {
+            "main": [
+                [
+                    {
+                        "node": "HTTP - Fetch Company Website",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Operation (CTO Filtered)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "HTTP - Fetch Company Website": {
+            "main": [
+                [
+                    {
+                        "node": "Code - Check FDA Claims",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code - Check FDA Claims": {
+            "main": [
+                [
+                    {
+                        "node": "Google Sheets - Save Lead",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Google Sheets - Save Lead": {
+            "main": [
+                [
+                    {
+                        "node": "OpenAI - Generate Outreach Message",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "OpenAI - Generate Outreach Message": {
+            "main": [
+                [
+                    {
+                        "node": "Google Sheets - Save Message",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "staticData": null,
+    "tags": [
+        {
+            "name": "lead-generation"
+        },
+        {
+            "name": "fda-compliance"
+        },
+        {
+            "name": "ai-medical-device"
+        }
+    ],
+    "triggerCount": 1,
+    "updatedAt": "2026-02-09T13:15:00.000Z",
+    "versionId": "1"
+}
