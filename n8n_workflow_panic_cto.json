@@ -195,9 +195,9 @@
         {
             "parameters": {
                 "method": "GET",
-                "url": "={{ $json.company_website }}",
+                "url": "http://api.scraperapi.com?api_key={{$credentials.scraperApiKey}}&url={{ $json.company_website }}",
                 "options": {
-                    "timeout": 10000
+                    "timeout": 60000
                 }
             },
             "id": "fetch-company-site",
